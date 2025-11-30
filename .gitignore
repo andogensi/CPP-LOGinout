@@ -1,0 +1,20 @@
+# 実行ファイル
+*.exe
+
+# テキストファイル
+*.txt
+
+# オブジェクトファイル
+*.o
+*.obj
+
+# その他のビルド成果物
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+
+/.vscode
+benchmark.cpp
+benchmark_lib.cpp
