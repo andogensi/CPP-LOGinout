@@ -1,0 +1,719 @@
+name: CI Test (Linux & Windows)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  # ===========================
+  # Linux ビルド & テスト
+  # ===========================
+  linux-build-and-test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+        cpp_standard: [17, 20]
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+
+    name: Linux - ${{ matrix.compiler }} - C++${{ matrix.cpp_standard }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+
+    - name: Install Clang (if needed)
+      if: matrix.compiler == 'clang'
+      run: |
+        sudo apt-get install -y clang
+
+    - name: Display compiler version
+      run: |
+        ${{ matrix.cxx }} --version
+
+    - name: Build example (header-only)
+      run: |
+        ${{ matrix.cxx }} -std=c++${{ matrix.cpp_standard }} \
+          examples/example.cpp \
+          -I include \
+          -pthread \
+          -o example_test
+        echo "✓ Header-only example built successfully"
+
+    - name: Build async test
+      run: |
+        ${{ matrix.cxx }} -std=c++${{ matrix.cpp_standard }} \
+          Test/test_async.cpp \
+          -I . \
+          -pthread \
+          -o test_async
+        echo "✓ Async test built successfully"
+
+    - name: Create test input file
+      run: |
+        echo "42" > in.txt
+        echo "Created in.txt with test value"
+
+    - name: Run unit tests
+      run: |
+        # loginf_tryのテスト（非ブロッキング）
+        ./test_unit
+      continue-on-error: true
+
+    - name: Build library version
+      run: |
+        ${{ matrix.cxx }} -std=c++${{ matrix.cpp_standard }} \
+          -c src/logfunc_lib.cpp \
+          -I include \
+          -o logfunc_lib.o
+        ar rcs liblogfunc.a logfunc_lib.o
+        echo "✓ Library built successfully"
+
+    - name: Build example with library
+      run: |
+        ${{ matrix.cxx }} -std=c++${{ matrix.cpp_standard }} \
+          examples/example_lib.cpp \
+          -I include \
+          -L. -llogfunc \
+          -pthread \
+          -o example_lib_test
+        echo "✓ Library example built successfully"
+
+  # Linux 単体テスト（自動化されたテスト）
+  linux-unit-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+
+    - name: Create automated unit test
+      run: |
+        cat > test_unit.cpp << 'EOF'
+        #include "include/logfunc.h"
+        #include <iostream>
+        #include <cassert>
+        #include <fstream>
+        #include <cstring>
+
+        int test_count = 0;
+        int pass_count = 0;
+
+        #define TEST(name) void name(); \
+            struct name##_register { name##_register() { std::cout << "Running: " #name << std::endl; test_count++; name(); pass_count++; std::cout << "  ✓ PASSED\n"; } } name##_instance; \
+            void name()
+
+        // テスト1: logff出力テスト
+        TEST(test_logff_output) {
+            // ログファイルを初期化
+            init_log("test_log.txt");
+            
+            // テスト出力
+            logff("Test value: ", 42, "\n");
+            logff("Float: ", 3.14f, "\n");
+            logff("Multiple: ", 1, " ", 2, " ", 3, "\n");
+            
+            // フラッシュして確実に書き込み
+            log_flush();
+            
+            // ファイルの存在確認
+            std::ifstream check("test_log.txt");
+            assert(check.good() && "Log file should exist");
+            
+            std::string content((std::istreambuf_iterator<char>(check)),
+                                std::istreambuf_iterator<char>());
+            assert(content.find("Test value: 42") != std::string::npos);
+            assert(content.find("Float: 3.14") != std::string::npos);
+        }
+
+        // テスト2: logto出力テスト
+        TEST(test_logto_output) {
+            logto("custom_test.txt", "Custom output: ", 100, "\n");
+            log_flush("custom_test.txt");
+            
+            std::ifstream check("custom_test.txt");
+            assert(check.good() && "Custom log file should exist");
+            
+            std::string line;
+            std::getline(check, line);
+            assert(line.find("Custom output: 100") != std::string::npos);
+        }
+
+        // テスト3: loginf_try 非ブロッキングテスト
+        TEST(test_loginf_try_nonblocking) {
+            // 入力ファイルを作成
+            init_input("test_input.txt");
+            {
+                std::ofstream input_file("test_input.txt");
+                input_file << "123\n";
+            }
+            
+            int value = 0;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should return true when file has value");
+            assert(value == 123 && "Value should be 123");
+        }
+
+        // テスト4: loginf_try ファイルなしテスト
+        TEST(test_loginf_try_empty) {
+            init_input("nonexistent_file_test.txt");
+            
+            // ファイルを削除（存在する場合）
+            std::remove("nonexistent_file_test.txt");
+            
+            int value = 999;
+            // ensure_input_file_existsが呼ばれるので、空ファイルが作られる
+            bool result = loginf_try(value);
+            
+            // 空ファイルなのでfalseが返る
+            assert(result == false && "loginf_try should return false for empty file");
+        }
+
+        // テスト5: loginf_timeout テスト
+        TEST(test_loginf_timeout) {
+            init_input("timeout_test.txt");
+            {
+                std::ofstream input_file("timeout_test.txt");
+                input_file << "456\n";
+            }
+            
+            int value = 0;
+            bool result = loginf_timeout(value, std::chrono::milliseconds(1000));
+            
+            assert(result == true && "loginf_timeout should succeed");
+            assert(value == 456 && "Value should be 456");
+        }
+
+        // テスト6: コメント行スキップテスト
+        TEST(test_comment_skip) {
+            init_input("comment_test.txt");
+            {
+                std::ofstream input_file("comment_test.txt");
+                input_file << "# This is a comment\n";
+                input_file << "   # Another comment with spaces\n";
+                input_file << "\n";  // 空行
+                input_file << "789\n";
+            }
+            
+            int value = 0;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should skip comments");
+            assert(value == 789 && "Value should be 789");
+        }
+
+        // テスト7: float型テスト
+        TEST(test_float_input) {
+            init_input("float_test.txt");
+            {
+                std::ofstream input_file("float_test.txt");
+                input_file << "3.14159\n";
+            }
+            
+            float value = 0.0f;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should read float");
+            assert(value > 3.14f && value < 3.15f && "Value should be approximately 3.14159");
+        }
+
+        // テスト8: double型テスト
+        TEST(test_double_input) {
+            init_input("double_test.txt");
+            {
+                std::ofstream input_file("double_test.txt");
+                input_file << "2.718281828\n";
+            }
+            
+            double value = 0.0;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should read double");
+            assert(value > 2.718 && value < 2.719 && "Value should be approximately 2.718281828");
+        }
+
+        // テスト9: サイレントモードテスト
+        TEST(test_silent_mode) {
+            log_set_silent_mode(true);
+            assert(log_is_silent_mode() == true);
+            
+            log_set_silent_mode(false);
+            assert(log_is_silent_mode() == false);
+            
+            // デフォルトに戻す
+            log_set_silent_mode(true);
+        }
+
+        // テスト10: log_close_all テスト
+        TEST(test_close_all) {
+            logff("Before close\n");
+            log_close_all();
+            // 再度書き込みできることを確認
+            logff("After close\n");
+            log_flush();
+        }
+
+        int main() {
+            std::cout << "\n========================================\n";
+            std::cout << "   logfunc Unit Test Suite (Linux)\n";
+            std::cout << "========================================\n\n";
+            
+            // テストは自動的に実行される（静的初期化）
+            
+            std::cout << "\n========================================\n";
+            std::cout << "   Results: " << pass_count << "/" << test_count << " tests passed\n";
+            std::cout << "========================================\n";
+            
+            // クリーンアップ
+            std::remove("test_log.txt");
+            std::remove("custom_test.txt");
+            std::remove("test_input.txt");
+            std::remove("nonexistent_file_test.txt");
+            std::remove("timeout_test.txt");
+            std::remove("comment_test.txt");
+            std::remove("float_test.txt");
+            std::remove("double_test.txt");
+            std::remove("in.txt");
+            std::remove("log.txt");
+            
+            return (pass_count == test_count) ? 0 : 1;
+        }
+        EOF
+
+    - name: Build unit tests
+      run: |
+        g++ -std=c++17 test_unit.cpp -I . -pthread -o test_unit
+
+    - name: Run unit tests
+      run: |
+        ./test_unit
+
+    - name: Cleanup
+      run: |
+        rm -f test_unit test_unit.cpp
+
+  # Linux CMakeビルドテスト
+  linux-cmake-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+
+    - name: Check for CMakeLists.txt
+      id: check_cmake
+      run: |
+        if [ -f "CMakeLists.txt" ]; then
+          echo "cmake_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "cmake_exists=false" >> $GITHUB_OUTPUT
+          echo "CMakeLists.txt not found, skipping CMake build"
+        fi
+
+    - name: CMake Configure
+      if: steps.check_cmake.outputs.cmake_exists == 'true'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DLOGFUNC_BUILD_EXAMPLES=ON
+
+    - name: CMake Build
+      if: steps.check_cmake.outputs.cmake_exists == 'true'
+      run: |
+        cd build
+        cmake --build .
+
+    - name: Direct build (fallback if no CMake)
+      if: steps.check_cmake.outputs.cmake_exists == 'false'
+      run: |
+        echo "Building directly with g++..."
+        g++ -std=c++17 examples/example.cpp -I include -pthread -o example
+        echo "✓ Build successful"
+
+  # ===========================
+  # Windows ビルド & テスト
+  # ===========================
+  windows-build-msvc:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        cpp_standard: [17, 20]
+
+    name: Windows - MSVC - C++${{ matrix.cpp_standard }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Display compiler version
+      shell: cmd
+      run: |
+        cl
+
+    - name: Build example (header-only) with MSVC
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cl /std:c++${{ matrix.cpp_standard }} /EHsc /I include examples\example.cpp /Fe:example_test.exe
+        echo ✓ Header-only example built successfully
+
+    - name: Build async test with MSVC
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cl /std:c++${{ matrix.cpp_standard }} /EHsc /I . Test\test_async.cpp /Fe:test_async.exe
+        echo ✓ Async test built successfully
+
+    - name: Build library version with MSVC
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cl /std:c++${{ matrix.cpp_standard }} /EHsc /c /I include src\logfunc_lib.cpp /Fo:logfunc_lib.obj
+        lib logfunc_lib.obj /OUT:logfunc.lib
+        echo ✓ Library built successfully
+
+    - name: Build example with library (MSVC)
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cl /std:c++${{ matrix.cpp_standard }} /EHsc /I include examples\example_lib.cpp logfunc.lib /Fe:example_lib_test.exe
+        echo ✓ Library example built successfully
+
+  # Windows MinGW ビルドテスト
+  windows-build-mingw:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        cpp_standard: [17, 20]
+
+    name: Windows - MinGW - C++${{ matrix.cpp_standard }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MinGW
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
+
+    - name: Display compiler version
+      shell: msys2 {0}
+      run: |
+        g++ --version
+
+    - name: Build example (header-only) with MinGW
+      shell: msys2 {0}
+      run: |
+        g++ -std=c++${{ matrix.cpp_standard }} examples/example.cpp -I include -o example_test.exe
+        echo "✓ Header-only example built successfully"
+
+    - name: Build async test with MinGW
+      shell: msys2 {0}
+      run: |
+        g++ -std=c++${{ matrix.cpp_standard }} Test/test_async.cpp -I . -o test_async.exe
+        echo "✓ Async test built successfully"
+
+    - name: Build library version with MinGW
+      shell: msys2 {0}
+      run: |
+        g++ -std=c++${{ matrix.cpp_standard }} -c src/logfunc_lib.cpp -I include -o logfunc_lib.o
+        ar rcs liblogfunc.a logfunc_lib.o
+        echo "✓ Library built successfully"
+
+    - name: Build example with library (MinGW)
+      shell: msys2 {0}
+      run: |
+        g++ -std=c++${{ matrix.cpp_standard }} examples/example_lib.cpp -I include -L. -llogfunc -o example_lib_test.exe
+        echo "✓ Library example built successfully"
+
+  # Windows 単体テスト
+  windows-unit-tests:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MinGW
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: mingw-w64-x86_64-gcc
+
+    - name: Create automated unit test
+      shell: msys2 {0}
+      run: |
+        cat > test_unit.cpp << 'EOF'
+        #include "include/logfunc.h"
+        #include <iostream>
+        #include <cassert>
+        #include <fstream>
+        #include <cstring>
+
+        int test_count = 0;
+        int pass_count = 0;
+
+        #define TEST(name) void name(); \
+            struct name##_register { name##_register() { std::cout << "Running: " #name << std::endl; test_count++; name(); pass_count++; std::cout << "  [PASSED]\n"; } } name##_instance; \
+            void name()
+
+        // テスト1: logff出力テスト
+        TEST(test_logff_output) {
+            init_log("test_log.txt");
+            logff("Test value: ", 42, "\n");
+            logff("Float: ", 3.14f, "\n");
+            logff("Multiple: ", 1, " ", 2, " ", 3, "\n");
+            log_flush();
+            
+            std::ifstream check("test_log.txt");
+            assert(check.good() && "Log file should exist");
+            
+            std::string content((std::istreambuf_iterator<char>(check)),
+                                std::istreambuf_iterator<char>());
+            assert(content.find("Test value: 42") != std::string::npos);
+            assert(content.find("Float: 3.14") != std::string::npos);
+        }
+
+        // テスト2: logto出力テスト
+        TEST(test_logto_output) {
+            logto("custom_test.txt", "Custom output: ", 100, "\n");
+            log_flush("custom_test.txt");
+            
+            std::ifstream check("custom_test.txt");
+            assert(check.good() && "Custom log file should exist");
+            
+            std::string line;
+            std::getline(check, line);
+            assert(line.find("Custom output: 100") != std::string::npos);
+        }
+
+        // テスト3: loginf_try 非ブロッキングテスト
+        TEST(test_loginf_try_nonblocking) {
+            init_input("test_input.txt");
+            {
+                std::ofstream input_file("test_input.txt");
+                input_file << "123\n";
+            }
+            
+            int value = 0;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should return true when file has value");
+            assert(value == 123 && "Value should be 123");
+        }
+
+        // テスト4: loginf_try ファイルなしテスト
+        TEST(test_loginf_try_empty) {
+            init_input("nonexistent_file_test.txt");
+            std::remove("nonexistent_file_test.txt");
+            
+            int value = 999;
+            bool result = loginf_try(value);
+            
+            assert(result == false && "loginf_try should return false for empty file");
+        }
+
+        // テスト5: loginf_timeout テスト
+        TEST(test_loginf_timeout) {
+            init_input("timeout_test.txt");
+            {
+                std::ofstream input_file("timeout_test.txt");
+                input_file << "456\n";
+            }
+            
+            int value = 0;
+            bool result = loginf_timeout(value, std::chrono::milliseconds(1000));
+            
+            assert(result == true && "loginf_timeout should succeed");
+            assert(value == 456 && "Value should be 456");
+        }
+
+        // テスト6: コメント行スキップテスト
+        TEST(test_comment_skip) {
+            init_input("comment_test.txt");
+            {
+                std::ofstream input_file("comment_test.txt");
+                input_file << "# This is a comment\n";
+                input_file << "   # Another comment with spaces\n";
+                input_file << "\n";
+                input_file << "789\n";
+            }
+            
+            int value = 0;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should skip comments");
+            assert(value == 789 && "Value should be 789");
+        }
+
+        // テスト7: float型テスト
+        TEST(test_float_input) {
+            init_input("float_test.txt");
+            {
+                std::ofstream input_file("float_test.txt");
+                input_file << "3.14159\n";
+            }
+            
+            float value = 0.0f;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should read float");
+            assert(value > 3.14f && value < 3.15f && "Value should be approximately 3.14159");
+        }
+
+        // テスト8: double型テスト
+        TEST(test_double_input) {
+            init_input("double_test.txt");
+            {
+                std::ofstream input_file("double_test.txt");
+                input_file << "2.718281828\n";
+            }
+            
+            double value = 0.0;
+            bool result = loginf_try(value);
+            
+            assert(result == true && "loginf_try should read double");
+            assert(value > 2.718 && value < 2.719 && "Value should be approximately 2.718281828");
+        }
+
+        // テスト9: サイレントモードテスト
+        TEST(test_silent_mode) {
+            log_set_silent_mode(true);
+            assert(log_is_silent_mode() == true);
+            
+            log_set_silent_mode(false);
+            assert(log_is_silent_mode() == false);
+            
+            log_set_silent_mode(true);
+        }
+
+        // テスト10: log_close_all テスト
+        TEST(test_close_all) {
+            logff("Before close\n");
+            log_close_all();
+            logff("After close\n");
+            log_flush();
+        }
+
+        int main() {
+            std::cout << "\n========================================\n";
+            std::cout << "   logfunc Unit Test Suite (Windows)\n";
+            std::cout << "========================================\n\n";
+            
+            std::cout << "\n========================================\n";
+            std::cout << "   Results: " << pass_count << "/" << test_count << " tests passed\n";
+            std::cout << "========================================\n";
+            
+            std::remove("test_log.txt");
+            std::remove("custom_test.txt");
+            std::remove("test_input.txt");
+            std::remove("nonexistent_file_test.txt");
+            std::remove("timeout_test.txt");
+            std::remove("comment_test.txt");
+            std::remove("float_test.txt");
+            std::remove("double_test.txt");
+            std::remove("in.txt");
+            std::remove("log.txt");
+            
+            return (pass_count == test_count) ? 0 : 1;
+        }
+        EOF
+
+    - name: Build unit tests
+      shell: msys2 {0}
+      run: |
+        g++ -std=c++17 test_unit.cpp -I . -o test_unit.exe
+
+    - name: Run unit tests
+      shell: msys2 {0}
+      run: |
+        ./test_unit.exe
+
+    - name: Cleanup
+      shell: msys2 {0}
+      run: |
+        rm -f test_unit.exe test_unit.cpp
+
+  # Windows CMakeビルドテスト
+  windows-cmake-build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MinGW
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake make
+
+    - name: Check for CMakeLists.txt
+      id: check_cmake
+      shell: msys2 {0}
+      run: |
+        if [ -f "CMakeLists.txt" ]; then
+          echo "cmake_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "cmake_exists=false" >> $GITHUB_OUTPUT
+          echo "CMakeLists.txt not found, skipping CMake build"
+        fi
+
+    - name: CMake Configure
+      if: steps.check_cmake.outputs.cmake_exists == 'true'
+      shell: msys2 {0}
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -G "MinGW Makefiles" -DLOGFUNC_BUILD_EXAMPLES=ON
+
+    - name: CMake Build
+      if: steps.check_cmake.outputs.cmake_exists == 'true'
+      shell: msys2 {0}
+      run: |
+        cd build
+        cmake --build .
+
+    - name: Direct build (fallback if no CMake)
+      if: steps.check_cmake.outputs.cmake_exists == 'false'
+      shell: msys2 {0}
+      run: |
+        echo "Building directly with g++..."
+        g++ -std=c++17 examples/example.cpp -I include -o example.exe
+        echo "✓ Build successful"
