@@ -127,10 +127,7 @@ public:
         std::lock_guard<std::mutex> lock(mtx_);
         handles_.clear();
     }
-    
-    // サイレントモードの設定
-    // true: ファイルオープン失敗時に例外を投げず、std::cerrに警告を出力
-    // false: 例外をなげる
+
     void set_silent_mode(bool silent) {
         std::lock_guard<std::mutex> lock(mtx_);
         silent_mode_ = silent;
@@ -203,10 +200,7 @@ inline void ensure_input_file_exists() {
     }
 }
 
-} // namespace おわりあんましネームspace使いたくない
-
-// グローバル空間のAPI関数 - std::coutの代わりに簡単に使える！std書くのだる杉井
-
+} 
 inline void init_log(std::string_view log_path) {
     logfunc_internal::get_log_file_path() = log_path;
 }
@@ -243,9 +237,6 @@ inline void logto(std::string_view filepath, Args&&... args) {
     logfunc_internal::get_file_cache().write_atomic(filepath, oss.str());
 }
 
-// コンソール出力 - 可変長引数テンプレート
-// 注い: std::coutへの出力は本来スレッドセーフだが、
-// 複数の<<操作の間に他スレッドの出力が入る可能性あり
 template<typename... Args>
 inline void logc(Args&&... args) {
     (std::cout << ... << std::forward<Args>(args));
@@ -315,7 +306,6 @@ inline void loginf(double& value) {
     loginf_impl(value);
 }
 
-// notブロッキング版: 即座にチェックして結果を返す
 template<typename T>
 inline bool loginf_try(T& value) {
     logfunc_internal::ensure_input_file_exists();
