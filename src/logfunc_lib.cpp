@@ -236,7 +236,7 @@ bool loginf_try_impl(T& value) {
     
     const auto& input_path = get_input_file_path();
     auto& cache = get_input_file_cache();
-    auto now = std::chrono::steady_clock::now()
+    auto now = std::chrono::steady_clock::now();
     auto current_modify_time = get_file_modify_time(input_path);
     if (cache.file_exists && 
         (now - cache.last_access) < InputFileCache::cache_duration &&
@@ -389,3 +389,5 @@ void log_set_silent_mode(bool silent) {
 bool log_is_silent_mode() {
     return logfunc_internal::get_file_cache().is_silent_mode();
 }
+
+} // namespace logfunc_internal

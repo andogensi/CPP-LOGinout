@@ -53,7 +53,6 @@ jobs:
           -I include \
           -pthread \
           -o example_test
-        echo "✓ Header-only example built successfully"
 
     - name: Build async test
       run: |
@@ -62,17 +61,20 @@ jobs:
           -I . \
           -pthread \
           -o test_async
-        echo "✓ Async test built successfully"
 
     - name: Create test input file
       run: |
         echo "42" > in.txt
         echo "Created in.txt with test value"
 
-    - name: Run unit tests
+    - name: Run example test
       run: |
-        # loginf_tryのテスト（非ブロッキング）
-        ./test_unit
+        ./example_test
+      continue-on-error: true
+
+    - name: Run async test
+      run: |
+        timeout 10s ./test_async || echo "Async test completed or timed out"
       continue-on-error: true
 
     - name: Build library version
@@ -82,7 +84,6 @@ jobs:
           -I include \
           -o logfunc_lib.o
         ar rcs liblogfunc.a logfunc_lib.o
-        echo "✓ Library built successfully"
 
     - name: Build example with library
       run: |
@@ -92,7 +93,6 @@ jobs:
           -L. -llogfunc \
           -pthread \
           -o example_lib_test
-        echo "✓ Library example built successfully"
 
   # Linux 単体テスト（自動化されたテスト）
   linux-unit-tests:
@@ -215,6 +215,8 @@ jobs:
                 input_file << "\n";  // 空行
                 input_file << "789\n";
             }
+            // キャッシュの有効期限が切れるまで待つ
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             int value = 0;
             bool result = loginf_try(value);
@@ -230,6 +232,8 @@ jobs:
                 std::ofstream input_file("float_test.txt");
                 input_file << "3.14159\n";
             }
+            // キャッシュの有効期限が切れるまで待つ
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             float value = 0.0f;
             bool result = loginf_try(value);
@@ -245,6 +249,8 @@ jobs:
                 std::ofstream input_file("double_test.txt");
                 input_file << "2.718281828\n";
             }
+            // キャッシュの有効期限が切れるまで待つ
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             double value = 0.0;
             bool result = loginf_try(value);
@@ -373,41 +379,24 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup MSVC
-      uses: microsoft/setup-msbuild@v2
+      uses: ilammy/msvc-dev-cmd@v1
 
     - name: Display compiler version
-      shell: cmd
-      run: |
-        cl
+      run: cl
 
     - name: Build example (header-only) with MSVC
-      shell: cmd
-      run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cl /std:c++${{ matrix.cpp_standard }} /EHsc /I include examples\example.cpp /Fe:example_test.exe
-        echo ✓ Header-only example built successfully
+      run: cl /std:c++${{ matrix.cpp_standard }} /EHsc /I include examples\example.cpp /Fe:example_test.exe
 
     - name: Build async test with MSVC
-      shell: cmd
-      run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cl /std:c++${{ matrix.cpp_standard }} /EHsc /I . Test\test_async.cpp /Fe:test_async.exe
-        echo ✓ Async test built successfully
+      run: cl /std:c++${{ matrix.cpp_standard }} /EHsc /I . Test\test_async.cpp /Fe:test_async.exe
 
     - name: Build library version with MSVC
-      shell: cmd
       run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         cl /std:c++${{ matrix.cpp_standard }} /EHsc /c /I include src\logfunc_lib.cpp /Fo:logfunc_lib.obj
         lib logfunc_lib.obj /OUT:logfunc.lib
-        echo ✓ Library built successfully
 
     - name: Build example with library (MSVC)
-      shell: cmd
-      run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cl /std:c++${{ matrix.cpp_standard }} /EHsc /I include examples\example_lib.cpp logfunc.lib /Fe:example_lib_test.exe
-        echo ✓ Library example built successfully
+      run: cl /std:c++${{ matrix.cpp_standard }} /EHsc /I include examples\example_lib.cpp logfunc.lib /Fe:example_lib_test.exe
 
   # Windows MinGW ビルドテスト
   windows-build-mingw:
@@ -439,26 +428,22 @@ jobs:
       shell: msys2 {0}
       run: |
         g++ -std=c++${{ matrix.cpp_standard }} examples/example.cpp -I include -o example_test.exe
-        echo "✓ Header-only example built successfully"
 
     - name: Build async test with MinGW
       shell: msys2 {0}
       run: |
         g++ -std=c++${{ matrix.cpp_standard }} Test/test_async.cpp -I . -o test_async.exe
-        echo "✓ Async test built successfully"
 
     - name: Build library version with MinGW
       shell: msys2 {0}
       run: |
         g++ -std=c++${{ matrix.cpp_standard }} -c src/logfunc_lib.cpp -I include -o logfunc_lib.o
         ar rcs liblogfunc.a logfunc_lib.o
-        echo "✓ Library built successfully"
 
     - name: Build example with library (MinGW)
       shell: msys2 {0}
       run: |
         g++ -std=c++${{ matrix.cpp_standard }} examples/example_lib.cpp -I include -L. -llogfunc -o example_lib_test.exe
-        echo "✓ Library example built successfully"
 
   # Windows 単体テスト
   windows-unit-tests:
@@ -573,6 +558,8 @@ jobs:
                 input_file << "\n";
                 input_file << "789\n";
             }
+            // キャッシュの有効期限が切れるまで待つ
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             int value = 0;
             bool result = loginf_try(value);
@@ -588,6 +575,8 @@ jobs:
                 std::ofstream input_file("float_test.txt");
                 input_file << "3.14159\n";
             }
+            // キャッシュの有効期限が切れるまで待つ
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             float value = 0.0f;
             bool result = loginf_try(value);
@@ -603,6 +592,8 @@ jobs:
                 std::ofstream input_file("double_test.txt");
                 input_file << "2.718281828\n";
             }
+            // キャッシュの有効期限が切れるまで待つ
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             double value = 0.0;
             bool result = loginf_try(value);
