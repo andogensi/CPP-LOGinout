@@ -3,7 +3,6 @@
 *.txt
 *.o
 *.obj
-*.a
 *.lib
 *.dll
 *.so

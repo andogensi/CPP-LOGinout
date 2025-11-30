@@ -305,6 +305,8 @@ bool loginf_timeout_impl(T& value, std::chrono::milliseconds timeout) {
         }
     }
 }
+} // namespace logfunc_internal
+
 // API
 void init_log(std::string_view log_path) {
     logfunc_internal::get_log_file_path() = log_path;
@@ -389,5 +391,3 @@ void log_set_silent_mode(bool silent) {
 bool log_is_silent_mode() {
     return logfunc_internal::get_file_cache().is_silent_mode();
 }
-
-} // namespace logfunc_internal
