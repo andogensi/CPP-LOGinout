@@ -156,6 +156,7 @@ jobs:
 
         // テスト3: loginf_try 非ブロッキングテスト
         TEST(test_loginf_try_nonblocking) {
+            log_reset();
             // 入力ファイルを作成
             init_input("test_input.txt");
             {
@@ -172,6 +173,7 @@ jobs:
 
         // テスト4: loginf_try ファイルなしテスト
         TEST(test_loginf_try_empty) {
+            log_reset();
             init_input("nonexistent_file_test.txt");
             
             // ファイルを削除（存在する場合）
@@ -187,11 +189,13 @@ jobs:
 
         // テスト5: loginf_timeout テスト
         TEST(test_loginf_timeout) {
+            log_reset();
             init_input("timeout_test.txt");
             {
                 std::ofstream input_file("timeout_test.txt");
                 input_file << "456\n";
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             int value = 0;
             bool result = loginf_timeout(value, std::chrono::milliseconds(1000));
@@ -202,6 +206,7 @@ jobs:
 
         // テスト6: コメント行スキップテスト
         TEST(test_comment_skip) {
+            log_reset();
             init_input("comment_test.txt");
             {
                 std::ofstream input_file("comment_test.txt");
@@ -222,6 +227,7 @@ jobs:
 
         // テスト7: float型テスト
         TEST(test_float_input) {
+            log_reset();
             init_input("float_test.txt");
             {
                 std::ofstream input_file("float_test.txt");
@@ -239,6 +245,7 @@ jobs:
 
         // テスト8: double型テスト
         TEST(test_double_input) {
+            log_reset();
             init_input("double_test.txt");
             {
                 std::ofstream input_file("double_test.txt");
@@ -545,6 +552,7 @@ jobs:
 
         // テスト3: loginf_try 非ブロッキングテスト
         TEST(test_loginf_try_nonblocking) {
+            log_reset();
             init_input("test_input.txt");
             {
                 std::ofstream input_file("test_input.txt");
@@ -560,6 +568,7 @@ jobs:
 
         // テスト4: loginf_try ファイルなしテスト
         TEST(test_loginf_try_empty) {
+            log_reset();
             init_input("nonexistent_file_test.txt");
             std::remove("nonexistent_file_test.txt");
             
@@ -571,11 +580,13 @@ jobs:
 
         // テスト5: loginf_timeout テスト
         TEST(test_loginf_timeout) {
+            log_reset();
             init_input("timeout_test.txt");
             {
                 std::ofstream input_file("timeout_test.txt");
                 input_file << "456\n";
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             
             int value = 0;
             bool result = loginf_timeout(value, std::chrono::milliseconds(1000));
@@ -586,6 +597,7 @@ jobs:
 
         // テスト6: コメント行スキップテスト
         TEST(test_comment_skip) {
+            log_reset();
             init_input("comment_test.txt");
             {
                 std::ofstream input_file("comment_test.txt");
@@ -606,6 +618,7 @@ jobs:
 
         // テスト7: float型テスト
         TEST(test_float_input) {
+            log_reset();
             init_input("float_test.txt");
             {
                 std::ofstream input_file("float_test.txt");
@@ -623,6 +636,7 @@ jobs:
 
         // テスト8: double型テスト
         TEST(test_double_input) {
+            log_reset();
             init_input("double_test.txt");
             {
                 std::ofstream input_file("double_test.txt");
