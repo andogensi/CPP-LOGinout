@@ -88,7 +88,7 @@ include(FetchContent)
 
 FetchContent_Declare(
     logfunc
-    GIT_REPOSITORY https://github.com/andogensi/C--LOGinout.git
+    GIT_REPOSITORY https://github.com/andogensi/CPP-LOGinout.git
     GIT_TAG main
 )
 FetchContent_MakeAvailable(logfunc)
@@ -238,6 +238,10 @@ logff("Value: ", 42, "\n");
 |----------|-------------|
 | `init_log(std::string_view path)` | Set log file path (default: "log.txt") |
 | `init_input(std::string_view path)` | Set input file path (default: "in.txt") |
+| `log_set_event_driven_mode(bool)` | Set file watch mode (true: OS native API, false: polling) |
+| `log_is_event_driven_mode()` | Get current file watch mode |
+| `log_has_native_file_watch_support()` | Check if OS native file watching is supported |
+| `log_reset()` | Reset default logger state (for testing) |
 
 ### Output Functions
 
@@ -246,6 +250,7 @@ logff("Value: ", 42, "\n");
 | `logff(args...)` | Output variadic arguments in stream style | Default or configured log file |
 | `logto(filepath, args...)` | Output variadic arguments to specified file | Specified file |
 | `logc(args...)` | Output variadic arguments to console | Console |
+| `logc_safe(args...)` | Thread-safe output to console | Console |
 | `log_flush(filepath)` | Force flush buffer for specified file (all files if omitted) | - |
 | `log_close_all()` | Close all file handles | - |
 
@@ -465,10 +470,13 @@ input float number:
 │   └── logfunc_lib.cpp       # Library version implementation
 ├── examples/                 # Sample programs
 │   ├── example.cpp           # Header-only version sample
-│   ├── example_lib.cpp       # Library version sample
+│   └── example_lib.cpp       # Library version sample
+├── Test/                     # Test programs
+│   └── test_async.cpp        # Async API tests
 ├── ASYNC_USAGE.md            # Detailed async API documentation
 ├── LICENSE                   # License file
-└── README.md                 # This file
+├── README.md                 # This file
+└── README_JA.md              # Japanese documentation
 ```
 
 ---
@@ -497,6 +505,56 @@ This has been resolved by introducing the `logto` function.
 ---
 
 ## Performance Optimization
+
+### Event-Driven File Watching
+
+Since v3.0, file watching uses OS native APIs for event-driven change detection.
+
+**Supported Platforms:**
+| OS | API | Features |
+|------|------|------|
+| Windows | `ReadDirectoryChangesW` | Async I/O, low latency |
+| Linux | `inotify` | Kernel-level monitoring, high efficiency |
+| macOS | `FSEvents` | Dispatch queue support |
+
+**Problems with traditional polling:**
+```cpp
+// ❌ Legacy: Access filesystem every 100ms
+while (!value_read) {
+    auto new_time = std::filesystem::last_write_time(path);  // Heavy
+    std::this_thread::sleep_for(100ms);  // Latency
+}
+```
+
+**Benefits of event-driven approach:**
+```cpp
+// ✅ New: Wait for OS notification (zero CPU load)
+watcher->wait_for_change();  // Blocking but 0% CPU usage
+```
+
+**Comparison:**
+| Aspect | Polling | Event-Driven |
+|------|---------------|-----------------|
+| CPU Usage | High (periodic access) | Near zero |
+| Latency | Up to 100ms | Near real-time |
+| Filesystem Load | High | Low |
+| SSD Wear | Yes | No |
+
+**Mode Switching:**
+```cpp
+// Disable event-driven mode (switch to polling)
+log_set_event_driven_mode(false);
+
+// Check current mode
+if (log_is_event_driven_mode()) {
+    std::cout << "Using event-driven file watching\n";
+}
+
+// Check OS native API support
+if (log_has_native_file_watch_support()) {
+    std::cout << "Native file watching is supported\n";
+}
+```
 
 ### File Handle Caching
 
@@ -579,7 +637,7 @@ g++ -std=c++17 your_program.cpp -I include -o program.exe
 
 ## Repository
 
-GitHub: [andogensi/C--LOGinout](https://github.com/andogensi/C--LOGinout)
+GitHub: [andogensi/CPP-LOGinout](https://github.com/andogensi/CPP-LOGinout)
 
 ---
 

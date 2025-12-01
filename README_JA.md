@@ -13,7 +13,7 @@ C++向けのシンプルな入出力ライブラリです。
 - **型安全** - テンプレートベースの可変長引数で任意の型をサポート
 - **ストリームスタイル** - `std::ofstream`/`std::ifstream`によるRAII準拠
 - **カスタマイズ可能** - `std::string`ベースのパス管理
-- **自動ファイル監視** - `std::filesystem`による更新検知
+- **自動ファイル監視** - OSネイティブAPI（イベント駆動）と`std::filesystem`によるフォールバック
 - **高パフォーマンス** - `std::unique_ptr`によるスマートなリソース管理
 - **スレッドセーフ** - `std::mutex`による排他制御
 - **クロスプラットフォーム** - Windows/Linux対応
@@ -88,7 +88,7 @@ include(FetchContent)
 
 FetchContent_Declare(
     logfunc
-    GIT_REPOSITORY https://github.com/andogensi/C--LOGinout.git
+    GIT_REPOSITORY https://github.com/andogensi/CPP-LOGinout.git
     GIT_TAG main
 )
 FetchContent_MakeAvailable(logfunc)
@@ -238,6 +238,10 @@ logff("Value: ", 42, "\n");
 |------|------|
 | `init_log(std::string_view path)` | ログファイルのパスを設定（デフォルト: "log.txt"） |
 | `init_input(std::string_view path)` | 入力ファイルのパスを設定（デフォルト: "in.txt"） |
+| `log_set_event_driven_mode(bool)` | ファイル監視モードを設定（true: OSネイティブAPI, false: ポーリング） |
+| `log_is_event_driven_mode()` | 現在のファイル監視モードを取得 |
+| `log_has_native_file_watch_support()` | OSネイティブファイル監視がサポートされているか |
+| `log_reset()` | デフォルトロガーの状態をリセット（テスト用） |
 
 ### 出力関数
 
@@ -246,6 +250,7 @@ logff("Value: ", 42, "\n");
 | `logff(args...)` | 可変長引数をストリームスタイルで出力 | デフォルトまたは設定されたログファイル |
 | `logto(filepath, args...)` | 指定ファイルに可変長引数を出力 | 指定されたファイル |
 | `logc(args...)` | 可変長引数をコンソールに出力 | コンソール |
+| `logc_safe(args...)` | スレッドセーフにコンソールに出力 | コンソール |
 | `log_flush(filepath)` | 指定ファイルのバッファを強制フラッシュ（省略時は全ファイル） | - |
 | `log_close_all()` | 全てのファイルハンドルをクローズ | - |
 
@@ -464,11 +469,14 @@ input float number:
 ├── src/                      # ソースファイル
 │   └── logfunc_lib.cpp       # ライブラリ版実装
 ├── examples/                 # サンプルプログラム
-│   ├── example.cpp           # ヘッダーオンリー版サンプル　AI
-│   ├── example_lib.cpp       # ライブラリ版サンプル　AI
-├── ASYNC_USAGE.md            # 非同期APIの詳細ドキュメント AI
-├── LICENSE                   # ライセンスファイル AI
-└── README.md                 # このファイル AI
+│   ├── example.cpp           # ヘッダーオンリー版サンプル
+│   └── example_lib.cpp       # ライブラリ版サンプル
+├── Test/                     # テストプログラム
+│   └── test_async.cpp        # 非同期APIテスト
+├── ASYNC_USAGE.md            # 非同期APIの詳細ドキュメント
+├── LICENSE                   # ライセンスファイル
+├── README.md                 # 英語版ドキュメント
+└── README_JA.md              # 日本語版ドキュメント（このファイル）
 ```
 
 ---
@@ -497,6 +505,56 @@ logto("custom.txt", "Status: ", "OK", "\n");  // custom.txtに "Status: OK"
 ---
 
 ## パフォーマンス最適化
+
+### イベント駆動型ファイル監視
+
+v3.0以降、ファイル監視にOSネイティブAPIを使用するイベント駆動方式を採用しています。
+
+**対応プラットフォーム:**
+| OS | API | 特徴 |
+|------|------|------|
+| Windows | `ReadDirectoryChangesW` | 非同期I/O、低レイテンシ |
+| Linux | `inotify` | カーネルレベルの監視、高効率 |
+| macOS | `FSEvents` | ディスパッチキュー対応 |
+
+**従来のポーリング方式の問題点:**
+```cpp
+// ❌ 従来: 100msごとにファイルシステムにアクセス
+while (!value_read) {
+    auto new_time = std::filesystem::last_write_time(path);  // 重い
+    std::this_thread::sleep_for(100ms);  // レイテンシ
+}
+```
+
+**イベント駆動方式のメリット:**
+```cpp
+// ✅ 新方式: OSからの通知を待機（CPU負荷ゼロ）
+watcher->wait_for_change();  // ブロッキングだがCPU使用率0%
+```
+
+**比較:**
+| 項目 | ポーリング方式 | イベント駆動方式 |
+|------|---------------|-----------------|
+| CPU使用率 | 高い（定期的なアクセス） | ほぼゼロ |
+| レイテンシ | 最大100ms | ほぼリアルタイム |
+| ファイルシステム負荷 | 高い | 低い |
+| SSD寿命への影響 | あり | なし |
+
+**モード切り替え:**
+```cpp
+// イベント駆動モードを無効化（ポーリングに切り替え）
+log_set_event_driven_mode(false);
+
+// 現在のモードを確認
+if (log_is_event_driven_mode()) {
+    std::cout << "Using event-driven file watching\n";
+}
+
+// OSネイティブAPIのサポート確認
+if (log_has_native_file_watch_support()) {
+    std::cout << "Native file watching is supported\n";
+}
+```
 
 ### ファイルハンドルキャッシュ
 
@@ -579,7 +637,7 @@ g++ -std=c++17 your_program.cpp -I include -o program.exe
 
 ## リポジトリ
 
-GitHub: [andogensi/C--LOGinout](https://github.com/andogensi/C--LOGinout)
+GitHub: [andogensi/CPP-LOGinout](https://github.com/andogensi/CPP-LOGinout)
 
 ---
 
